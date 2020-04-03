@@ -1,42 +1,88 @@
-# Java Maven CircleCI 2.0 configuration file
-#
-# Check https://circleci.com/docs/2.0/language-java/ for more details
-#
 version: 2
+parameters:
+  temp-workspace:
+    type: string
+    default: "/temp/workspace"
 jobs:
-  build:
+  编译:
     docker:
-      # specify the version you desire here
       - image: circleci/openjdk:8-jdk
-      
-      # Specify service dependencies here if necessary
-      # CircleCI maintains a library of pre-built images
-      # documented at https://circleci.com/docs/2.0/circleci-images/
-      # - image: circleci/postgres:9.4
-
-    working_directory: ~/repo
+    working_directory: ~/circleci-demo
 
     environment:
-      # Customize the JVM maximum heap limit
-      MAVEN_OPTS: -Xmx3200m
-    
+      JVM_OPTS: -Xmx3200m
+      MVN_ARGS: -Dmaven.repo.local=.repo
+
     steps:
       - checkout
 
-      # Download and cache dependencies
       - restore_cache:
           keys:
-          - v1-dependencies-{{ checksum "pom.xml" }}
-          # fallback to using the latest cache if no exact match is found
-          - v1-dependencies-
+            - v1-dependencies-{{ checksum "pom.xml" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
 
-      - run: mvn dependency:go-offline
+      - run: mvn clean install package ${MVN_ARGS}
 
       - save_cache:
           paths:
-            - ~/.m2
+            -  ~/circleci-demo/.repo
           key: v1-dependencies-{{ checksum "pom.xml" }}
-        
-      # run tests!
-      - run: mvn integration-test
 
+      - store_artifacts:
+          path: target/
+          destination: circleci-demo-jar
+
+      - persist_to_workspace:
+          root: << parameters.temp-workspace >>
+          paths:
+            - ~/circleci-demo
+  测试:
+    docker:
+      - image: circleci/openjdk:8-jdk
+    working_directory: << parameters.temp-workspace >>
+
+    environment:
+      JVM_OPTS: -Xmx3200m
+      MVN_ARGS: -Dmaven.repo.local=.repo
+
+    steps:
+      - attach_workspace:
+          at: << parameters.temp-workspace >>
+
+      - run: | 
+          cd << parameters.temp-workspace >>
+          mvn clean test ${MVN_ARGS}
+
+      - store_test_results:
+          path: target/surefire-reports
+
+
+workflows:
+  version: 2
+  build-deploy:
+    jobs:
+      - 编译:
+
+      - 测试:
+          requires:
+            - build
+
+      - 确认发布:
+          type: approval
+          requires:
+            - 测试
+
+      - 发布至站点1:
+          requires:
+            - 确认发布
+          filters:
+            branches:
+              only: master
+
+      - 发布至站点2:
+          requires:
+            - 确认发布
+          filters:
+            branches:
+              only: master
